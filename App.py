@@ -208,7 +208,8 @@ tab_trending, tab_search = st.tabs(["🔥 인기 급상승 TOP 50", "🔍 키워
 
 # --- [Tab 1] 인기 급상승 페이지 ---
 with tab_trending:
-    c1, c2, c3 = st.columns([2, 3, 1])
+    # 3개 열 구조에서 4개 열(c1~c4) 구조로 변경하여 밸런스 매칭
+    c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
     with c1:
         region_dict = {"대한민국": "KR", "미국": "US", "일본": "JP", "영국": "GB", "독일": "DE", "프랑스": "FR", "인도": "IN", "브라질": "BR"}
         region_sel = st.selectbox("지역 선택", list(region_dict.keys()), index=0, label_visibility="collapsed")
@@ -226,13 +227,19 @@ with tab_trending:
         cat_sel = st.selectbox("카테고리 선택", [c[1] for c in categories], index=0, label_visibility="collapsed")
         cat_id = [c[0] for c in categories if c[1] == cat_sel][0]
     with c3:
+        # ★ [추가] 인기 급상승용 동영상 포맷 선택 필터
+        trend_duration_dict = {"전체 포맷": "any", "숏폼 (1분 이내 정통)": "short", "일반 영상 (1분~20분)": "medium", "장편/롱폼 (20분 초과)": "long"}
+        trend_duration_sel = st.selectbox("포맷 설정", list(trend_duration_dict.keys()), index=0, key="trend_dur", label_visibility="collapsed")
+        trend_duration_code = trend_duration_dict[trend_duration_sel]
+    with c4:
         load_trending = st.button("불러오기", key="btn_trend", type="primary", use_container_width=True)
 
     if load_trending:
         with st.spinner("불러오는 중..."):
             try:
+                # 인기 급상승 내 영상들의 정확한 시간 판별을 위해 contentDetails를 요청에 추가합니다.
                 params = {
-                    "part": "snippet,statistics",
+                    "part": "snippet,statistics,contentDetails",
                     "chart": "mostPopular",
                     "regionCode": region_code,
                     "maxResults": 50
@@ -246,7 +253,28 @@ with tab_trending:
                 if not items:
                     st.info("결과가 없습니다.")
                 
-                for idx, item in enumerate(items):
+                # 포맷 조건에 맞게 필터링 가공 진행
+                processed_trend_items = []
+                for item in items:
+                    raw_dur = item.get("contentDetails", {}).get("duration", "")
+                    total_secs, time_tag = parse_iso_duration(raw_dur)
+                    item["_total_secs"] = total_secs
+                    item["_time_tag"] = time_tag
+                    
+                    # ★ [인기 급상승 전용 내부 후처리 필터 필터링]
+                    if trend_duration_code == "short" and total_secs > 61:
+                        continue
+                    elif trend_duration_code == "medium" and (total_secs <= 61 or total_secs > 1200):
+                        continue
+                    elif trend_duration_code == "long" and total_secs <= 1200:
+                        continue
+                        
+                    processed_trend_items.append(item)
+                
+                if not processed_trend_items:
+                    st.info("인기 급상승 차트 50개 리스트 중 선택하신 포맷 조건에 부합하는 영상이 없습니다.")
+                
+                for idx, item in enumerate(processed_trend_items):
                     v_id = item["id"]
                     sn = item.get("snippet", {})
                     st_dict = item.get("statistics", {})
@@ -256,6 +284,7 @@ with tab_trending:
                     thumb = sn.get("thumbnails", {}).get("medium", {}).get("url", "")
                     views = fmt_number(st_dict.get("viewCount", 0))
                     time_str = time_ago(sn.get("publishedAt", ""))
+                    time_tag = item["_time_tag"]
                     
                     v_url = f"https://www.youtube.com/watch?v={v_id}"
                     ch_url = f"https://www.youtube.com/channel/{sn.get('channelId', '')}"
@@ -267,7 +296,7 @@ with tab_trending:
                         <div class="video-meta">
                             <a class="video-title" href="{v_url}" target="_blank">{title}</a>
                             <div style="margin-top:2px;"><a class="video-channel" href="{ch_url}" target="_blank">{channel}</a></div>
-                            <div class="video-stats">조회수 {views}회 · {time_str}</div>
+                            <div class="video-stats">조회수 {views}회 · {time_str} <span style="color:#ff0000; font-weight:bold;">{time_tag}</span></div>
                         </div>
                     </div>
                     """
@@ -275,16 +304,14 @@ with tab_trending:
             except Exception as e:
                 st.error(f"오류가 발생했습니다: {str(e)}")
 
-# --- [Tab 2] 키워드 트렌드 페이지 (숏폼/롱폼 선택 조건 컬럼 구조 확장) ---
+# --- [Tab 2] 키워드 트렌드 페이지 ---
 with tab_search:
-    # 기존 4개 열 구조에서 5개 열(s1~s5) 구조로 확장하여 균형감 유지
     s1, s2, s3, s4, s5 = st.columns([3, 1, 1, 1, 1])
     with s1:
         search_q = st.text_input("키워드 입력", placeholder="키워드를 입력하세요 (예: AI, 요리, 게임)", label_visibility="collapsed")
     with s2:
-        # ★ [추가] 동영상 포맷 선택 상자
         duration_dict = {"전체 포맷": "any", "숏폼 (4분 미만)": "short", "일반 (4분~20분)": "medium", "롱폼 (20분 초과)": "long"}
-        duration_sel = st.selectbox("포맷 설정", list(duration_dict.keys()), index=0, label_visibility="collapsed")
+        duration_sel = st.selectbox("포맷 설정", list(duration_dict.keys()), index=0, key="search_dur", label_visibility="collapsed")
         duration_code = duration_dict[duration_sel]
     with s3:
         order_dict = {"조회수": "viewCount", "관련성": "relevance", "최신순": "date", "평점순": "rating"}
@@ -312,7 +339,6 @@ with tab_search:
                         "regionCode": "KR"
                     }
                     
-                    # ★ API 단 1차 필터링 적용 (any가 아닐 때만 파라미터 주입)
                     if duration_code != "any":
                         search_params["videoDuration"] = duration_code
                         
@@ -327,13 +353,12 @@ with tab_search:
                         st.info("결과가 없습니다.")
                     else:
                         details = yt_fetch("videos", {
-                            "part": "snippet,statistics,contentDetails", # 재생시간 파싱을 위해 contentDetails 추가
+                            "part": "snippet,statistics,contentDetails",
                             "id": ",".join(v_ids),
                             "maxResults": 50
                         })
                         items = details.get("items", [])
                         
-                        # 각 비디오의 정확한 재생시간 초단위 환산 처리
                         processed_items = []
                         for item in items:
                             raw_dur = item.get("contentDetails", {}).get("duration", "")
@@ -341,9 +366,6 @@ with tab_search:
                             item["_total_secs"] = total_secs
                             item["_time_tag"] = time_tag
                             
-                            # ★ [정밀 필터링 스크립트 추가]
-                            # 만약 유저가 완전한 숏폼(1분 이내 Shorts) 트래킹을 원하여 'short(API상 4분 미만)'를 선택한 경우, 
-                            # 가져온 데이터 풀 내부에서 61초 이하 콘텐츠만 2차 필터링 가동하여 정확도를 극대화합니다.
                             if duration_code == "short" and total_secs > 61:
                                 continue
                             processed_items.append(item)
@@ -364,7 +386,7 @@ with tab_search:
                             thumb = sn.get("thumbnails", {}).get("medium", {}).get("url", "")
                             views = fmt_number(st_dict.get("viewCount", 0))
                             time_str = time_ago(sn.get("publishedAt", ""))
-                            time_tag = item["_time_tag"] # 우측 통계 영역에 노출할 이쁜 재생시간 포맷 [01:23]
+                            time_tag = item["_time_tag"]
                             
                             v_url = f"https://www.youtube.com/watch?v={v_id}"
                             ch_url = f"https://www.youtube.com/channel/{sn.get('channelId', '')}"
